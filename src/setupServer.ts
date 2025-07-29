@@ -13,8 +13,12 @@ import hpp from "hpp";
 import cookieSession from "cookie-session";
 import compression from "compression";
 import HTTP_STATUS from "http-status-codes";
+import { Server } from "socket.io";
+import { createClient } from "redis";
+import { createAdapter } from "@socket.io/redis-adapter";
 import "express-async-errors";
 import { config } from "./config";
+import { Socket } from "socket.io";
 
 const SERVER_PORT = 5000;
 
@@ -38,7 +42,7 @@ export class TalktyServer {
       cookieSession({
         name: "session",
         keys: [config.SECRET_KEY_ONE!, config.SECRET_KEY_TWO!],
-        maxAge: 24 * 7 * 3600000, // 7 days in milliseconds
+        maxAge: 24 * 7 * 3600000,
         secure: config.NODE_ENV !== "development",
       })
     );
@@ -67,17 +71,34 @@ export class TalktyServer {
   private async startServer(app: Application): Promise<void> {
     try {
       const httpServer: http.Server = new http.Server(app);
+      const socketIO: Server = await this.createSocketIO(httpServer);
+      this.socketIOConnections(socketIO);
       this.startHttpServer(httpServer);
     } catch (error) {
       console.log(error);
     }
   }
 
-  private createSocketIO(httpServer: http.Server): void {}
+  private async createSocketIO(httpServer: http.Server): Promise<Server> {
+    const io: Server = new Server(httpServer, {
+      cors: {
+        origin: config.CLIENT_URL,
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      },
+    });
+    const pubClient = createClient({ url: config.REDIS_HOST });
+    const subClient = pubClient.duplicate();
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+    io.adapter(createAdapter(pubClient, subClient));
+    return io;
+  }
 
   private startHttpServer(httpServer: http.Server): void {
+    console.log(process.pid);
     httpServer.listen(SERVER_PORT, () => {
       console.log(`Server running on port ${SERVER_PORT}`);
     });
   }
+
+  private socketIOConnections(io: Server): void {}
 }
